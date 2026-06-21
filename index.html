@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Trip Split — учёт расходов вдвоём</title>
+<!--
+  ============================================================
+  СИНХРОНИЗАЦИЯ МЕЖДУ ДВУМЯ ТЕЛЕФОНАМИ — НАСТРОЙКА (5 минут)
+  ============================================================
+  Без этого приложение работает, но хранит данные только на
+  одном устройстве. Чтобы вы оба видели один список:
+
+  1. console.firebase.google.com → Create project (Analytics можно выключить).
+  2. Build → Realtime Database → Create database → выбери регион
+     (europe-west1) → запусти. Потом вкладка Rules, вставь это и Publish:
+        {
+          "rules": {
+            "rooms": { "$room": { ".read": true, ".write": true } }
+          }
+        }
+  3. Project settings (шестерёнка) → внизу "Your apps" → значок </> (Web)
+     → зарегистрируй → скопируй объект firebaseConfig.
+  4. Вставь его ниже вместо плейсхолдера FIREBASE_CONFIG.
+     ОБЯЗАТЕЛЬНО проверь, что есть строка databaseURL — если в скопированном
+     объекте её нет, возьми URL со страницы Realtime Database (вид
+     https://ИМЯ-default-rtdb.europe-west1.firebasedatabase.app) и добавь.
+  5. Залей файл на GitHub Pages и открывай по ССЫЛКЕ https (не двойным
+     кликом по файлу — модули Firebase по file:// не грузятся).
+  6. На своём телефоне открой ссылку → в Настройках будет код комнаты.
+     Дай этот код партнёру, он вводит тот же код у себя → видите одно и то же.
+
+  Приватность по-честному: правила выше открыты всем, кто знает код комнаты.
+  Для трат на отпуск это ок, код случайный и угадать трудно. Если захочешь
+  полноценную защиту — это уже Firebase Auth, скажи, добавлю.
+  ============================================================
+-->
+<style>
+  :root{
+    --bg-1:#fdf1e7;--bg-2:#e6f1ee;--bg-3:#eef0fb;
+    --surface:#ffffff;--surface-2:#fbf6f1;--ink:#2c2620;--muted:#8d837a;
+    --line:rgba(44,38,32,.08);--line-strong:rgba(44,38,32,.14);
+    --me:#df7a5c;--me-ink:#a13e26;--me-soft:#fbe6dd;
+    --partner:#2a9d8f;--partner-ink:#1d6b62;--partner-soft:#d8efea;
+    --gold:#e0a93b;--gold-soft:#f8ecd2;--warn:#c9762a;--warn-soft:#fbe6d4;
+    --cash:#6a6fb0;--cash-soft:#e6e7f6;
+    --radius:20px;--radius-sm:13px;
+    --shadow:0 8px 30px rgba(44,38,32,.09);--shadow-sm:0 3px 12px rgba(44,38,32,.07);
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}html,body{margin:0;padding:0}
+  body{font-family:var(--font);color:var(--ink);line-height:1.45;-webkit-font-smoothing:antialiased;min-height:100vh;
+    background:radial-gradient(1100px 600px at 88% -8%,var(--bg-1),transparent 60%),
+      radial-gradient(900px 700px at -10% 110%,var(--bg-3),transparent 55%),
+      linear-gradient(165deg,var(--bg-1) 0%,var(--bg-2) 55%,var(--bg-3) 100%);
+    background-attachment:fixed;}
+  .wrap{max-width:760px;margin:0 auto;padding:18px 16px 60px;}
+  .num{font-variant-numeric:tabular-nums;}
+
+  header.app{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 2px 18px;}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0;}
+  .brand .mark{width:42px;height:42px;border-radius:13px;flex:none;
+    background:linear-gradient(150deg,var(--me),var(--gold) 60%,var(--partner));
+    display:grid;place-items:center;font-size:20px;box-shadow:var(--shadow-sm);}
+  .brand h1{font-size:18px;margin:0;font-weight:750;letter-spacing:-.02em;}
+  .brand p{margin:1px 0 0;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .head-actions{display:flex;align-items:center;gap:8px;flex:none;}
+  .sync-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--surface);
+    border-radius:13px;padding:9px 11px;font-size:12.5px;font-weight:700;color:var(--ink);cursor:pointer;
+    box-shadow:var(--shadow-sm);font-family:var(--font);}
+  .sdot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none;}
+  .sdot.online{background:#3aa66a;box-shadow:0 0 0 3px rgba(58,166,106,.18);}
+  .sdot.offline{background:var(--warn);}
+  .sdot.local{background:var(--muted);}
+  .sdot.error{background:#d9534f;}
+  .icon-btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);width:42px;height:42px;
+    border-radius:13px;font-size:18px;cursor:pointer;display:grid;place-items:center;box-shadow:var(--shadow-sm);transition:transform .12s ease;}
+  .icon-btn:hover{transform:translateY(-1px);}
+
+  .hero{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px 20px;margin-bottom:14px;position:relative;overflow:hidden;}
+  .hero::after{content:"";position:absolute;right:-40px;top:-50px;width:160px;height:160px;border-radius:50%;
+    background:radial-gradient(circle at 30% 30%,var(--gold-soft),transparent 70%);pointer-events:none;}
+  .hero .eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:700;}
+  .flow{display:flex;align-items:center;gap:12px;margin:14px 0 6px;flex-wrap:wrap;}
+  .who{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:999px;font-weight:700;font-size:14px;}
+  .who .dot{width:10px;height:10px;border-radius:50%;flex:none;}
+  .who.me{background:var(--me-soft);color:var(--me-ink);}.who.me .dot{background:var(--me);}
+  .who.partner{background:var(--partner-soft);color:var(--partner-ink);}.who.partner .dot{background:var(--partner);}
+  .arrow{flex:1;min-width:46px;height:2px;background:linear-gradient(90deg,var(--line-strong),var(--line));position:relative;}
+  .arrow::after{content:"";position:absolute;right:-1px;top:-4px;border-left:9px solid var(--line-strong);border-top:5px solid transparent;border-bottom:5px solid transparent;}
+  .hero .amount{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1.05;margin:4px 0 2px;}
+  .hero .amount.settled{font-size:30px;}
+  .hero .sub{color:var(--muted);font-size:14px;}
+  .breakdown{margin-top:16px;border-top:1px solid var(--line);padding-top:12px;display:grid;gap:8px;}
+  .brow{display:flex;justify-content:space-between;gap:12px;font-size:13.5px;align-items:baseline;}
+  .brow .k{color:var(--muted);}.brow .v{font-weight:650;text-align:right;}
+  .brow.pending .v{color:var(--warn);}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;margin-bottom:18px;}
+  .stat{background:var(--surface);border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);padding:14px 14px 13px;border:1px solid var(--line);position:relative;}
+  .stat .lab{font-size:12px;color:var(--muted);font-weight:650;display:flex;align-items:center;gap:6px;}
+  .stat .big{font-size:22px;font-weight:780;letter-spacing:-.02em;margin-top:5px;}
+  .stat .hint{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.35;}
+  .stat .tag{position:absolute;top:12px;right:12px;width:9px;height:9px;border-radius:50%;}
+  .stat.t-shared .tag{background:var(--gold);}.stat.t-cover .tag{background:var(--partner);}
+  .stat.t-me .tag{background:var(--me);}.stat.t-partner .tag{background:var(--partner);}
+  .stat.t-cash .tag{background:var(--cash);}.stat.t-total .tag{background:var(--ink);}
+
+  .panel{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:6px;margin-bottom:18px;}
+  .tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--surface-2);border-radius:15px;padding:5px;margin-bottom:4px;}
+  .tab{border:none;background:transparent;padding:11px 8px;border-radius:11px;font-weight:700;font-size:14px;color:var(--muted);cursor:pointer;transition:all .15s ease;font-family:var(--font);}
+  .tab.active{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm);}
+  .form{padding:14px 12px 12px;}
+  .field{margin-bottom:13px;}
+  .field>label{display:block;font-size:12.5px;font-weight:700;color:var(--ink);margin-bottom:6px;}
+  input[type=text],input[type=number],input[type=date],select,textarea{width:100%;font-family:var(--font);font-size:15px;color:var(--ink);
+    border:1px solid var(--line-strong);border-radius:12px;padding:12px 13px;background:#fff;transition:border-color .15s ease,box-shadow .15s ease;}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--partner);box-shadow:0 0 0 3px var(--partner-soft);}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .amount-wrap{position:relative;}
+  .amount-wrap input{font-size:22px;font-weight:750;padding-right:42px;}
+  .amount-wrap .cur{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:18px;font-weight:700;color:var(--muted);}
+  .seg{display:flex;gap:6px;background:var(--surface-2);border-radius:13px;padding:5px;}
+  .seg button{flex:1;border:none;background:transparent;padding:10px 6px;border-radius:9px;font-weight:700;font-size:13.5px;color:var(--muted);cursor:pointer;font-family:var(--font);transition:all .15s ease;}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:var(--shadow-sm);}
+  .seg.payer button.on[data-v=me]{color:var(--me-ink);}.seg.payer button.on[data-v=partner]{color:var(--partner-ink);}
+  .chips{display:flex;flex-wrap:wrap;gap:7px;}
+  .chip{border:1px solid var(--line-strong);background:#fff;border-radius:11px;padding:9px 11px;font-size:13px;font-weight:650;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:var(--font);color:var(--ink);transition:all .13s ease;}
+  .chip:hover{border-color:var(--partner);}.chip.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .note{margin-top:10px;background:var(--warn-soft);border:1px solid #f0d3ad;border-radius:12px;padding:11px 12px;font-size:12.8px;color:#8a5418;display:none;gap:8px;align-items:flex-start;}
+  .note.show{display:flex;}.note b{color:#7a4711;}
+  .submit{width:100%;border:none;border-radius:14px;padding:15px;font-size:15.5px;font-weight:750;cursor:pointer;background:linear-gradient(135deg,var(--me),var(--gold));color:#fff;font-family:var(--font);box-shadow:0 6px 18px rgba(223,122,92,.32);transition:transform .12s ease,filter .12s ease;margin-top:4px;}
+  .submit.cash{background:linear-gradient(135deg,var(--cash),#8f93c9);box-shadow:0 6px 18px rgba(106,111,176,.32);}
+  .submit:hover{filter:brightness(1.03);transform:translateY(-1px);}
+  .edit-bar{display:none;gap:8px;margin-top:8px;}.edit-bar.show{display:flex;}
+  .edit-bar .cancel{flex:none;border:1px solid var(--line-strong);background:#fff;border-radius:14px;padding:0 16px;font-weight:700;color:var(--muted);cursor:pointer;font-family:var(--font);font-size:14px;}
+  .edit-bar .submit{margin-top:0;flex:1;}
+
+  .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center;}
+  .filters .search{flex:1;min-width:160px;position:relative;}
+  .filters .search input{padding-left:36px;font-size:14px;}
+  .filters .search .ic{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--muted);}
+  .filters select{flex:none;width:auto;font-size:13px;padding:10px 12px;background:#fff;}
+
+  .list-head{display:flex;align-items:baseline;justify-content:space-between;margin:4px 2px 10px;}
+  .list-head h2{font-size:15px;margin:0;font-weight:750;letter-spacing:-.01em;}
+  .list-head .count{font-size:12.5px;color:var(--muted);font-weight:600;}
+  .list{display:grid;gap:10px;}
+  .op{background:var(--surface);border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);border:1px solid var(--line);border-left:4px solid var(--line-strong);padding:13px 14px;display:flex;gap:12px;align-items:flex-start;}
+  .op.pay-me{border-left-color:var(--me);}.op.pay-partner{border-left-color:var(--partner);}
+  .op.kind-cash{border-left-color:var(--cash);background:linear-gradient(0deg,var(--cash-soft),#fff 70%);}
+  .op .em{font-size:22px;line-height:1;flex:none;margin-top:1px;}
+  .op .body{flex:1;min-width:0;}
+  .op .title-line{font-weight:700;font-size:14.5px;word-break:break-word;}
+  .op .desc{font-size:12.5px;color:var(--muted);margin-top:2px;line-height:1.4;}
+  .op .meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;}
+  .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:7px;background:var(--surface-2);color:var(--muted);}
+  .badge.b-shared{background:var(--gold-soft);color:#946614;}.badge.b-me{background:var(--me-soft);color:var(--me-ink);}
+  .badge.b-partner{background:var(--partner-soft);color:var(--partner-ink);}.badge.b-cover{background:var(--partner-soft);color:var(--partner-ink);}
+  .badge.b-cash{background:var(--cash-soft);color:#4a4f93;}.badge.b-date{background:transparent;color:var(--muted);padding-left:0;}
+  .badge.b-pending{background:var(--warn-soft);color:var(--warn);}.badge.b-ok{background:var(--partner-soft);color:var(--partner-ink);}
+  .op .right{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex:none;}
+  .op .sum{font-weight:800;font-size:16px;letter-spacing:-.02em;white-space:nowrap;}
+  .op .actions{display:flex;gap:6px;}
+  .op .actions button{border:1px solid var(--line);background:#fff;border-radius:9px;width:30px;height:30px;cursor:pointer;font-size:14px;display:grid;place-items:center;color:var(--muted);transition:all .12s ease;}
+  .op .actions button:hover{color:var(--ink);border-color:var(--line-strong);}
+  .empty{text-align:center;padding:38px 20px;color:var(--muted);background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-sm);border:1px dashed var(--line-strong);}
+  .empty .big{font-size:30px;margin-bottom:8px;}.empty p{margin:4px 0;font-size:14px;}
+
+  footer.app{margin-top:26px;text-align:center;color:var(--muted);font-size:12px;}
+  footer.app .ver{opacity:.7;}
+
+  .overlay{position:fixed;inset:0;background:rgba(36,30,24,.42);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:18px;z-index:50;}
+  .overlay.show{display:flex;}
+  .modal{background:var(--surface);border-radius:var(--radius);box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:440px;max-height:90vh;overflow:auto;padding:22px;}
+  .modal h3{margin:0 0 4px;font-size:18px;font-weight:780;}
+  .modal .lead{color:var(--muted);font-size:13.5px;margin:0 0 16px;}
+  .modal .field{margin-bottom:14px;}
+  .sync-box{background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:6px;}
+  .sync-status{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;margin-bottom:4px;}
+  .sync-status .hint{font-weight:500;color:var(--muted);font-size:12.5px;margin-top:2px;}
+  .room-row{display:flex;gap:8px;margin-top:10px;}
+  .room-row input{font-weight:700;letter-spacing:.02em;}
+  .room-row button{flex:none;}
+  .data-btns{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:6px;}
+  .gbtn{border:1px solid var(--line-strong);background:#fff;border-radius:12px;padding:12px;font-weight:700;font-size:13.5px;cursor:pointer;font-family:var(--font);color:var(--ink);transition:all .12s ease;}
+  .gbtn:hover{border-color:var(--partner);}
+  .gbtn.danger{color:#b23b2e;border-color:#eccac6;background:#fcf0ee;}
+  .gbtn.danger:hover{border-color:#d98a82;}
+  .gbtn.full{grid-column:1 / -1;}
+  .modal-foot{display:flex;gap:9px;margin-top:18px;}
+  .modal-foot button{flex:1;border-radius:13px;padding:13px;font-weight:750;font-size:14.5px;cursor:pointer;font-family:var(--font);border:1px solid var(--line-strong);background:#fff;color:var(--ink);}
+  .modal-foot .primary{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .modal-foot .primary.danger{background:#c33a2c;border-color:#c33a2c;}
+  .hr{height:1px;background:var(--line);margin:18px 0;}
+  .sub-h{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:750;margin:0 0 10px;}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:12px;font-size:13.5px;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:all .25s ease;z-index:60;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (max-width:430px){.hero .amount{font-size:34px;}.stat .big{font-size:20px;}.data-btns{grid-template-columns:1fr;}.brand p{max-width:140px;}}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+  button:focus-visible,input:focus-visible,select:focus-visible,.chip:focus-visible{outline:2px solid var(--partner);outline-offset:2px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="app">
+    <div class="brand">
+      <div class="mark">🏝️</div>
+      <div>
+        <h1>Trip Split</h1>
+        <p id="brandSub">расходы и наличные вдвоём</p>
+      </div>
+    </div>
+    <div class="head-actions">
+      <button class="sync-pill" id="syncPill"><span class="sdot local" id="syncDot"></span><span id="syncLabel">Локально</span></button>
+      <button class="icon-btn" id="openSettings" title="Настройки" aria-label="Настройки">⚙️</button>
+    </div>
+  </header>
+
+  <section class="hero" id="hero" aria-live="polite"></section>
+  <section class="grid" id="dash"></section>
+
+  <section class="panel">
+    <div class="tabs">
+      <button class="tab active" id="tabExpense" data-tab="expense">＋ Расход</button>
+      <button class="tab" id="tabCash" data-tab="cash">💶 Возврат наличными</button>
+    </div>
+
+    <div class="form" id="formExpense">
+      <div class="field amount-wrap">
+        <label for="exAmount">Сумма</label>
+        <input id="exAmount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0" />
+        <span class="cur" id="exCur">€</span>
+      </div>
+      <div class="field">
+        <label>Кто оплатил</label>
+        <div class="seg payer" id="exPayer">
+          <button type="button" data-v="me" class="on">Я</button>
+          <button type="button" data-v="partner">Бойфренд</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Категория</label>
+        <div class="chips" id="exCats"></div>
+      </div>
+      <div class="field">
+        <label for="exMode">Тип расхода</label>
+        <select id="exMode">
+          <option value="shared">Общий — делится 50/50</option>
+          <option value="personal_me">Личное — моё</option>
+          <option value="personal_partner">Личное — бойфренда</option>
+          <option value="partner_covered">Оплачивает бойфренд (не делится)</option>
+        </select>
+        <div class="note" id="exWarn"><span>⚠️</span><span id="exWarnText"></span></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label for="exDesc">Описание</label><input id="exDesc" type="text" placeholder="например, ужин у моря" /></div>
+        <div class="field"><label for="exDate">Дата</label><input id="exDate" type="date" /></div>
+      </div>
+      <button class="submit" id="exSubmit">Добавить расход</button>
+      <div class="edit-bar" id="exEditBar">
+        <button class="cancel" id="exCancel">Отмена</button>
+        <button class="submit" id="exSave">Сохранить изменения</button>
+      </div>
+    </div>
+
+    <div class="form" id="formCash" style="display:none">
+      <div class="field amount-wrap">
+        <label for="csAmount">Сумма возврата</label>
+        <input id="csAmount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0" />
+        <span class="cur" id="csCur">€</span>
+      </div>
+      <div class="field">
+        <label>Кто кому передал наличные</label>
+        <div class="seg" id="csDir">
+          <button type="button" data-v="me2partner" class="on">Я → Бойфренд</button>
+          <button type="button" data-v="partner2me">Бойфренд → Я</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Статус</label>
+        <div class="seg" id="csStatus">
+          <button type="button" data-v="confirmed" class="on">Передано и принято</button>
+          <button type="button" data-v="pending">Ждёт подтверждения</button>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field"><label for="csComment">Комментарий</label><input id="csComment" type="text" placeholder="отдала часть долга" /></div>
+        <div class="field"><label for="csDate">Дата</label><input id="csDate" type="date" /></div>
+      </div>
+      <button class="submit cash" id="csSubmit">Добавить возврат</button>
+      <div class="edit-bar" id="csEditBar">
+        <button class="cancel" id="csCancel">Отмена</button>
+        <button class="submit cash" id="csSave">Сохранить изменения</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="filters">
+    <div class="search"><span class="ic">🔍</span><input id="fSearch" type="text" placeholder="Поиск по описанию" /></div>
+    <select id="fPayer"></select>
+    <select id="fCat"></select>
+    <select id="fMode">
+      <option value="all">Все типы</option>
+      <option value="shared">Делится</option>
+      <option value="nonshared">Не делится</option>
+      <option value="cash">Возвраты</option>
+    </select>
+  </div>
+
+  <div class="list-head"><h2>История операций</h2><span class="count" id="listCount"></span></div>
+  <section class="list" id="list"></section>
+
+  <footer class="app">
+    <div>Trip Split · общий список синхронизируется через Firebase</div>
+    <div class="ver">€ наличными · v2 · sync</div>
+  </footer>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="overlay" id="settingsOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+    <h3 id="setTitle">Настройки</h3>
+    <p class="lead">Синхронизация, имена участников, валюта и данные.</p>
+
+    <p class="sub-h">Синхронизация</p>
+    <div class="sync-box">
+      <div class="sync-status"><span class="sdot local" id="setDot"></span><span id="setStatusText">Локальный режим</span></div>
+      <div class="hint" id="setStatusHint">Firebase не настроен — данные только на этом устройстве.</div>
+      <div class="room-row">
+        <input id="setRoom" type="text" placeholder="код комнаты" autocomplete="off" />
+        <button class="gbtn" id="joinRoom">Подключить</button>
+      </div>
+      <div class="data-btns" style="margin-top:9px">
+        <button class="gbtn full" id="copyRoom">📋 Скопировать код для партнёра</button>
+      </div>
+    </div>
+
+    <div class="hr"></div>
+    <p class="sub-h">Участники</p>
+    <div class="row2">
+      <div class="field"><label for="setMe">Имя «Я»</label><input id="setMe" type="text" maxlength="24" /></div>
+      <div class="field"><label for="setPartner">Имя партнёра</label><input id="setPartner" type="text" maxlength="24" /></div>
+    </div>
+    <div class="field">
+      <label for="setCur">Валюта отображения</label>
+      <select id="setCur"><option value="€">€ — евро</option><option value="₽">₽ — рубль</option><option value="$">$ — доллар</option></select>
+    </div>
+
+    <div class="hr"></div>
+    <p class="sub-h">Данные</p>
+    <div class="data-btns">
+      <button class="gbtn" id="expCsv">⬇ Экспорт CSV</button>
+      <button class="gbtn" id="expJson">⬇ Экспорт JSON</button>
+      <button class="gbtn full" id="impJson">⬆ Импорт из JSON</button>
+      <button class="gbtn danger full" id="clearAll">🗑 Очистить все данные</button>
+    </div>
+    <input type="file" id="jsonFile" accept="application/json,.json" style="display:none" />
+
+    <div class="modal-foot"><button class="primary" id="saveSettings">Готово</button></div>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL -->
+<div class="overlay" id="confirmOverlay">
+  <div class="modal" role="dialog" aria-modal="true" style="max-width:380px" aria-labelledby="cfTitle">
+    <h3 id="cfTitle">Подтверждение</h3>
+    <p class="lead" id="cfText">Вы уверены?</p>
+    <div class="modal-foot"><button id="cfCancel">Отмена</button><button class="primary danger" id="cfOk">Удалить</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+/* ========= FIREBASE CONFIG — вставь сюда свой объект из консоли Firebase ========= */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBlWrIKkoa13uBPlXQhEQZG5XCIzlfD6XU",
+  authDomain: "shared-spendings.firebaseapp.com",
+  databaseURL: "https://shared-spendings-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "shared-spendings",
+  storageBucket: "shared-spendings.firebasestorage.app",
+  messagingSenderId: "1010956953494",
+  appId: "1:1010956953494:web:e73a9edfd7baf9abd49fb7"
+};
+const SDK = "https://www.gstatic.com/firebasejs/10.12.2/";
+const CONFIGURED = !!(FIREBASE_CONFIG.databaseURL && !FIREBASE_CONFIG.databaseURL.includes("PASTE"));
+/* ================================================================================ */
+
+const LS_KEY = "tripSplitData_v2";
+const state = {
+  operations: [],
+  settings: { meName: "Я", partnerName: "Бойфренд", currency: "€" },
+  room: "",
+  activeTab: "expense",
+  editingId: null,
+  ex: { payer: "me", category: "products", mode: "shared" },
+  cs: { dir: "me2partner", status: "confirmed" },
+  filters: { search: "", payer: "all", category: "all", mode: "all" }
+};
+
+const CATS = {
+  products:{label:"Продукты",emoji:"🛒"}, restaurant:{label:"Ресторан / кафе",emoji:"🍽️"},
+  transport:{label:"Транспорт / такси",emoji:"🚕"}, housing:{label:"Жильё",emoji:"🏠"},
+  entertainment:{label:"Развлечения",emoji:"🎟️"}, pharmacy:{label:"Аптека",emoji:"💊"}, other:{label:"Другое",emoji:"✨"}
+};
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const numv = v => { const n = Number(v); return isFinite(n) ? n : 0; };
+const sum = (arr, f = o => numv(o.amount)) => arr.reduce((a, o) => a + f(o), 0);
+const round2 = n => Math.round((numv(n) + Number.EPSILON) * 100) / 100;
+const me = () => state.settings.meName || "Я";
+const partner = () => state.settings.partnerName || "Бойфренд";
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const todayISO = () => { const d = new Date(), z = n => String(n).padStart(2,"0"); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`; };
+function fmt(n){ const v=round2(n), sym=state.settings.currency||"€"; const s=Number.isInteger(v)?String(v):v.toFixed(2); return sym==="$"?"$"+s:s+" "+sym; }
+function fmtDate(iso){ if(!iso)return""; const p=String(iso).split("-"); return p.length===3?`${p[2]}.${p[1]}.${p[0]}`:iso; }
+function esc(s){ return String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
+function defaultMode(cat,payer){
+  if(cat==="products"||cat==="housing"||cat==="entertainment")return"shared";
+  if(cat==="restaurant")return"partner_covered";
+  if(cat==="transport"||cat==="pharmacy")return payer==="partner"?"personal_partner":"personal_me";
+  return"shared";
+}
+function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),1800); }
+
+/* ---------- local persistence (mirror / offline fallback) ---------- */
+function localSave(){ try{ localStorage.setItem(LS_KEY, JSON.stringify({operations:state.operations, settings:state.settings, room:state.room})); }catch(e){} }
+function localLoad(){ try{ const d=JSON.parse(localStorage.getItem(LS_KEY)); if(d){ if(Array.isArray(d.operations))state.operations=d.operations; if(d.settings)state.settings=Object.assign(state.settings,d.settings); if(d.room)state.room=d.room; } }catch(e){} }
+
+/* ---------- cloud (Firebase Realtime Database) ---------- */
+let FB=null, db=null, detach=null, seeded=false, statusKind="local";
+
+function setStatus(kind){
+  statusKind=kind;
+  const dot=$("syncDot"), lab=$("syncLabel"), sdot=$("setDot"), stx=$("setStatusText"), shint=$("setStatusHint");
+  const map={
+    online:{c:"online",t:"Синхр.",full:"Синхронизировано",hint:`Комната: ${state.room}. Изменения сразу видны на обоих телефонах.`},
+    offline:{c:"offline",t:"Нет сети",full:"Нет сети",hint:"Изменения сохранятся локально и отправятся, когда вернётся интернет."},
+    connecting:{c:"offline",t:"Связь…",full:"Подключение…",hint:"Соединяемся с облаком…"},
+    local:{c:"local",t:"Локально",full:"Локальный режим",hint:"Firebase не настроен — данные только на этом устройстве. Инструкция в начале файла."},
+    error:{c:"error",t:"Ошибка",full:"Ошибка облака",hint:"Не удалось подключиться. Проверь firebaseConfig и правила базы. Работает локально."}
+  };
+  const m=map[kind]||map.local;
+  if(dot){dot.className="sdot "+m.c;} if(lab){lab.textContent=m.t;}
+  if(sdot){sdot.className="sdot "+m.c;} if(stx){stx.textContent=m.full;} if(shint){shint.textContent=m.hint;}
+}
+
+async function initCloud(){
+  if(!CONFIGURED){ setStatus("local"); return; }
+  setStatus("connecting");
+  try{
+    const appMod = await import(SDK+"firebase-app.js");
+    const dbMod  = await import(SDK+"firebase-database.js");
+    FB = dbMod;
+    const app = appMod.initializeApp(FIREBASE_CONFIG);
+    db = dbMod.getDatabase(app);
+    dbMod.onValue(dbMod.ref(db,".info/connected"), s=>{ setStatus(s.val()?"online":"offline"); });
+    attachRoom(state.room);
+  }catch(e){ console.error("cloud init failed",e); setStatus("error"); }
+}
+
+function attachRoom(code){
+  if(!db||!FB) return;
+  if(detach){ detach(); detach=null; }
+  seeded=false;
+  const r=FB.ref(db,"rooms/"+code);
+  detach=FB.onValue(r, snap=>{
+    const data=snap.val();
+    if(!data || !data.ops){
+      if(!seeded && state.operations.length){ seeded=true; pushAllLocal(code); return; }
+      seeded=true;
+      if(!state.operations.length){ state.operations=[]; localSave(); syncLabelsAndRefresh(); }
+      return;
+    }
+    seeded=true;
+    state.operations=Object.values(data.ops);
+    if(data.settings) state.settings=Object.assign(state.settings,data.settings);
+    localSave();
+    syncLabelsAndRefresh();
+  }, err=>{ console.error(err); setStatus("error"); });
+}
+
+function pushAllLocal(code){
+  if(!db||!FB) return;
+  const updates={};
+  state.operations.forEach(o=>{ updates["rooms/"+code+"/ops/"+o.id]=o; });
+  updates["rooms/"+code+"/settings"]=state.settings;
+  FB.update(FB.ref(db), updates).catch(e=>console.error(e));
+}
+
+/* write helpers used everywhere */
+function opSet(op){
+  const i=state.operations.findIndex(o=>o.id===op.id);
+  if(i>=0)state.operations[i]=op; else state.operations.push(op);
+  localSave(); syncLabelsAndRefresh();
+  if(db&&FB) FB.set(FB.ref(db,"rooms/"+state.room+"/ops/"+op.id), op).catch(e=>console.error(e));
+}
+function opRemove(id){
+  state.operations=state.operations.filter(o=>o.id!==id);
+  localSave(); syncLabelsAndRefresh();
+  if(db&&FB) FB.remove(FB.ref(db,"rooms/"+state.room+"/ops/"+id)).catch(e=>console.error(e));
+}
+function settingsSave(){
+  localSave();
+  if(db&&FB) FB.set(FB.ref(db,"rooms/"+state.room+"/settings"), state.settings).catch(e=>console.error(e));
+}
+function replaceAll(ops, settings){
+  state.operations=ops; if(settings)state.settings=Object.assign(state.settings,settings);
+  localSave(); syncLabelsAndRefresh();
+  if(db&&FB){
+    const opsObj={}; ops.forEach(o=>opsObj[o.id]=o);
+    FB.set(FB.ref(db,"rooms/"+state.room), {ops:opsObj, settings:state.settings}).catch(e=>console.error(e));
+  }
+}
+
+/* ---------- compute ---------- */
+function compute(){
+  const ops=state.operations;
+  const exp=ops.filter(o=>o.type==="expense");
+  const rep=ops.filter(o=>o.type==="cash_repayment");
+  const shared=exp.filter(o=>o.expenseMode==="shared");
+  const sharedTotal=sum(shared), eachShare=sharedTotal/2;
+  const paidMeShared=sum(shared.filter(o=>o.payer==="me"));
+  const baseMyBalance=paidMeShared-eachShare;
+  const myPersonal=sum(exp.filter(o=>o.expenseMode==="personal_me"));
+  const partnerPersonal=sum(exp.filter(o=>o.expenseMode==="personal_partner"));
+  const partnerCovered=sum(exp.filter(o=>o.expenseMode==="partner_covered"));
+  const conf=rep.filter(o=>o.status==="confirmed");
+  const iGave=sum(conf.filter(o=>o.from==="me"));
+  const partnerGave=sum(conf.filter(o=>o.from==="partner"));
+  const netCashToMe=partnerGave-iGave;                 // физический поток налички ко мне (для отображения)
+  const finalMyBalance=baseMyBalance+iGave-partnerGave; // отдавая партнёру наличные, я уменьшаю свой долг
+  const pend=rep.filter(o=>o.status==="pending");
+  const pendNet=sum(pend.filter(o=>o.from==="partner"))-sum(pend.filter(o=>o.from==="me"));
+  const totalAll=sum(exp), paidMeAll=sum(exp.filter(o=>o.payer==="me")), paidPartnerAll=sum(exp.filter(o=>o.payer==="partner"));
+  return {sharedTotal,eachShare,baseMyBalance,myPersonal,partnerPersonal,partnerCovered,iGave,partnerGave,netCashToMe,finalMyBalance,pendNet,pendCount:pend.length,totalAll,paidMeAll,paidPartnerAll};
+}
+
+/* ---------- render: hero ---------- */
+function renderHero(){
+  const c=compute(), final=round2(c.finalMyBalance), base=round2(c.baseMyBalance), net=round2(c.netCashToMe);
+  let html=`<div class="eyebrow">Финальный остаток</div>`;
+  if(Math.abs(final)<0.005){
+    html+=`<div class="amount settled">Вы в расчёте 💫</div><div class="sub">Никто никому не должен по общим расходам.</div>`;
+  }else{
+    const pom=final>0, debtor=pom?"partner":"me", creditor=pom?"me":"partner", nm=w=>w==="me"?me():partner();
+    html+=`<div class="flow"><span class="who ${debtor}"><span class="dot"></span>${esc(nm(debtor))}</span><span class="arrow"></span><span class="who ${creditor}"><span class="dot"></span>${esc(nm(creditor))}</span></div>
+      <div class="amount num">${fmt(Math.abs(final))}</div>
+      <div class="sub"><b>${esc(nm(debtor))}</b> должен(а) <b>${esc(nm(creditor))}</b></div>`;
+  }
+  const baseLine=Math.abs(base)<0.005?"поровну":(base>0?`${esc(partner())} → ${esc(me())}: ${fmt(Math.abs(base))}`:`${esc(me())} → ${esc(partner())}: ${fmt(Math.abs(base))}`);
+  const cashLine=Math.abs(net)<0.005?"—":(net>0?`${esc(partner())} → ${esc(me())}: ${fmt(Math.abs(net))}`:`${esc(me())} → ${esc(partner())}: ${fmt(Math.abs(net))}`);
+  html+=`<div class="breakdown">
+    <div class="brow"><span class="k">По расходам (без наличных)</span><span class="v num">${baseLine}</span></div>
+    <div class="brow"><span class="k">Передано наличными</span><span class="v num">${cashLine}</span></div>`;
+  if(c.pendCount>0){
+    const pl=c.pendNet>0?`${esc(partner())} → ${esc(me())}`:`${esc(me())} → ${esc(partner())}`;
+    html+=`<div class="brow pending"><span class="k">Ждёт подтверждения (${c.pendCount})</span><span class="v num">${Math.abs(c.pendNet)<0.005?"—":pl+": "+fmt(Math.abs(c.pendNet))}</span></div>`;
+  }
+  html+=`</div>`;
+  $("hero").innerHTML=html;
+}
+
+/* ---------- render: dashboard ---------- */
+function renderDash(){
+  const c=compute();
+  const cards=[
+    {cls:"t-shared",lab:"Общие расходы",big:fmt(c.sharedTotal),hint:`по ${fmt(c.eachShare)} с каждого`},
+    {cls:"t-cover",lab:`Оплатил ${esc(partner())}`,big:fmt(c.partnerCovered),hint:"рестораны и т.п. · не делится"},
+    {cls:"t-me",lab:`Личные: ${esc(me())}`,big:fmt(c.myPersonal),hint:"не влияет на баланс"},
+    {cls:"t-partner",lab:`Личные: ${esc(partner())}`,big:fmt(c.partnerPersonal),hint:"не влияет на баланс"},
+    {cls:"t-cash",lab:"Наличными",big:fmt(Math.abs(c.netCashToMe)),hint:Math.abs(c.netCashToMe)<0.005?"пока ничего не передано":(c.netCashToMe>0?`${esc(partner())} → ${esc(me())}`:`${esc(me())} → ${esc(partner())}`)},
+    {cls:"t-total",lab:"Всего за отпуск",big:fmt(c.totalAll),hint:`${esc(me())}: ${fmt(c.paidMeAll)} · ${esc(partner())}: ${fmt(c.paidPartnerAll)}`}
+  ];
+  $("dash").innerHTML=cards.map(k=>`<div class="stat ${k.cls}"><span class="tag"></span><div class="lab">${k.lab}</div><div class="big num">${k.big}</div><div class="hint">${k.hint}</div></div>`).join("");
+}
+
+/* ---------- render: list ---------- */
+function describe(o){
+  if(o.type==="cash_repayment"){ const a=fmt(o.amount); return o.from==="me"?`${esc(me())} → ${esc(partner())}: ${a} наличными`:`${esc(partner())} → ${esc(me())}: ${a} наличными`; }
+  const cat=(CATS[o.category]||CATS.other).label, a=fmt(o.amount);
+  switch(o.expenseMode){
+    case"shared":return`Общий расход: ${cat} — ${a}, делится пополам`;
+    case"personal_me":return`Личная трата (${esc(me())}): ${cat} — ${a}`;
+    case"personal_partner":return`Личная трата (${esc(partner())}): ${cat} — ${a}`;
+    case"partner_covered":return`${cat}: ${a}, оплачено ${esc(partner())}, не делится`;
+    default:return`${cat} — ${a}`;
+  }
+}
+function passesFilter(o){
+  const f=state.filters;
+  if(f.search){ const hay=((o.description||"")+" "+(o.comment||"")+" "+(o.type==="expense"?(CATS[o.category]||{}).label||"":"наличные")).toLowerCase(); if(!hay.includes(f.search.toLowerCase()))return false; }
+  if(f.mode!=="all"){
+    if(f.mode==="cash"&&o.type!=="cash_repayment")return false;
+    if(f.mode==="shared"&&!(o.type==="expense"&&o.expenseMode==="shared"))return false;
+    if(f.mode==="nonshared"&&!(o.type==="expense"&&o.expenseMode!=="shared"))return false;
+  }
+  if(f.payer!=="all"){ const who=o.type==="expense"?o.payer:o.from; if(who!==f.payer)return false; }
+  if(f.category!=="all"){ if(o.type!=="expense"||o.category!==f.category)return false; }
+  return true;
+}
+function renderList(){
+  const ops=state.operations.filter(passesFilter).sort((a,b)=>(b.date||"").localeCompare(a.date||"")||String(b.id).localeCompare(String(a.id)));
+  $("listCount").textContent=ops.length?`${ops.length} шт.`:"";
+  if(!ops.length){
+    const any=state.operations.length>0;
+    $("list").innerHTML=`<div class="empty"><div class="big">${any?"🔍":"🧳"}</div>${any?"<p>Ничего не найдено.</p><p>Сбрось фильтры или измени поиск.</p>":"<p>Пока пусто.</p><p>Добавь первый расход — баланс посчитается сам.</p>"}</div>`;
+    return;
+  }
+  $("list").innerHTML=ops.map(o=>{
+    if(o.type==="cash_repayment"){
+      const sb=o.status==="pending"?`<span class="badge b-pending">⏳ ждёт подтверждения</span>`:`<span class="badge b-ok">✓ принято</span>`;
+      const title=o.from==="me"?`${esc(me())} отдал(а) ${esc(partner())} ${fmt(o.amount)} наличными`:`${esc(partner())} отдал(а) ${esc(me())} ${fmt(o.amount)} наличными`;
+      return`<div class="op kind-cash" data-id="${o.id}"><div class="em">💶</div><div class="body"><div class="title-line">${title}</div>${o.comment?`<div class="desc">${esc(o.comment)}</div>`:""}<div class="meta"><span class="badge b-cash">Возврат наличными</span>${sb}<span class="badge b-date">${fmtDate(o.date)}</span></div></div><div class="right"><div class="sum num">${fmt(o.amount)}</div><div class="actions"><button data-act="edit" title="Изменить">✏️</button><button data-act="del" title="Удалить">🗑</button></div></div></div>`;
+    }
+    const cat=CATS[o.category]||CATS.other, payCls=o.payer==="me"?"pay-me":"pay-partner";
+    let mb;
+    if(o.expenseMode==="shared")mb=`<span class="badge b-shared">Делится 50/50</span>`;
+    else if(o.expenseMode==="personal_me")mb=`<span class="badge b-me">Личное: ${esc(me())}</span>`;
+    else if(o.expenseMode==="personal_partner")mb=`<span class="badge b-partner">Личное: ${esc(partner())}</span>`;
+    else mb=`<span class="badge b-cover">Оплатил ${esc(partner())}</span>`;
+    const pb=`<span class="badge ${o.payer==="me"?"b-me":"b-partner"}">💳 ${o.payer==="me"?esc(me()):esc(partner())}</span>`;
+    const title=o.description?esc(o.description):cat.label;
+    return`<div class="op ${payCls}" data-id="${o.id}"><div class="em">${cat.emoji}</div><div class="body"><div class="title-line">${title}</div><div class="desc">${describe(o)}</div><div class="meta">${mb}${pb}<span class="badge b-date">${fmtDate(o.date)}</span></div></div><div class="right"><div class="sum num">${fmt(o.amount)}</div><div class="actions"><button data-act="edit" title="Изменить">✏️</button><button data-act="del" title="Удалить">🗑</button></div></div></div>`;
+  }).join("");
+}
+
+function refresh(){ renderHero(); renderDash(); renderList(); }
+function syncLabelsAndRefresh(){ syncExLabels(); syncCsLabels(); buildFilterSelects(); refresh(); }
+
+/* ---------- expense form ---------- */
+function renderCatChips(){
+  $("exCats").innerHTML=Object.entries(CATS).map(([k,v])=>`<button type="button" class="chip ${state.ex.category===k?"on":""}" data-cat="${k}">${v.emoji} ${v.label}</button>`).join("");
+}
+function syncExLabels(){
+  $("exPayer").children[0].textContent=me();
+  $("exPayer").children[1].textContent=partner();
+  $("exMode").options[1].text="Личное — "+me().toLowerCase();
+  $("exMode").options[2].text="Личное — "+partner().toLowerCase();
+  $("exMode").options[3].text=`Оплачивает ${partner().toLowerCase()} (не делится)`;
+  $("exCur").textContent=state.settings.currency;
+}
+function updateExWarn(){
+  const warn=state.ex.category==="restaurant"&&state.ex.payer==="me";
+  $("exWarn").classList.toggle("show",warn);
+  if(warn)$("exWarnText").innerHTML=`<b>Необычная ситуация:</b> ресторан обычно оплачивает ${esc(partner())}. Расход помечен как «не делится» и не создаёт долг. Поменяй тип вручную, если нужно.`;
+}
+function setExMode(m){ state.ex.mode=m; $("exMode").value=m; }
+function autoModeFromCategory(){ setExMode(defaultMode(state.ex.category,state.ex.payer)); updateExWarn(); }
+
+function syncCsLabels(){
+  $("csDir").children[0].textContent=`${me()} → ${partner()}`;
+  $("csDir").children[1].textContent=`${partner()} → ${me()}`;
+  $("csCur").textContent=state.settings.currency;
+}
+
+/* ---------- tabs ---------- */
+function setTab(t){
+  state.activeTab=t;
+  $("tabExpense").classList.toggle("active",t==="expense");
+  $("tabCash").classList.toggle("active",t==="cash");
+  $("formExpense").style.display=t==="expense"?"":"none";
+  $("formCash").style.display=t==="cash"?"":"none";
+}
+$("tabExpense").onclick=()=>{ if(state.editingId)cancelEdit(); setTab("expense"); };
+$("tabCash").onclick=()=>{ if(state.editingId)cancelEdit(); setTab("cash"); };
+
+$("exPayer").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return;
+  [...$("exPayer").children].forEach(x=>x.classList.remove("on")); b.classList.add("on"); state.ex.payer=b.dataset.v;
+  if(state.ex.category==="transport"||state.ex.category==="pharmacy")autoModeFromCategory(); updateExWarn(); });
+$("exCats").addEventListener("click",e=>{ const b=e.target.closest("[data-cat]"); if(!b)return; state.ex.category=b.dataset.cat; renderCatChips(); autoModeFromCategory(); });
+$("exMode").addEventListener("change",e=>{ state.ex.mode=e.target.value; });
+$("csDir").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return; [...$("csDir").children].forEach(x=>x.classList.remove("on")); b.classList.add("on"); state.cs.dir=b.dataset.v; });
+$("csStatus").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return; [...$("csStatus").children].forEach(x=>x.classList.remove("on")); b.classList.add("on"); state.cs.status=b.dataset.v; });
+
+/* ---------- add / save ---------- */
+function flash(el){ el.style.borderColor="#d9534f"; el.focus(); setTimeout(()=>el.style.borderColor="",1200); }
+function readExpense(){ const amount=round2($("exAmount").value); if(!(amount>0)){flash($("exAmount"));return null;}
+  return {type:"expense",amount,payer:state.ex.payer,category:state.ex.category,expenseMode:state.ex.mode,description:$("exDesc").value.trim(),date:$("exDate").value||todayISO()}; }
+function clearExpenseForm(){ $("exAmount").value="";$("exDesc").value="";$("exDate").value=todayISO();
+  state.ex={payer:"me",category:"products",mode:"shared"};
+  [...$("exPayer").children].forEach((x,i)=>x.classList.toggle("on",i===0));
+  renderCatChips(); setExMode("shared"); updateExWarn(); }
+$("exSubmit").onclick=()=>{ const d=readExpense(); if(!d)return; d.id=newId(); opSet(d); clearExpenseForm(); toast("Расход добавлен"); };
+$("exSave").onclick=()=>{ const d=readExpense(); if(!d)return; d.id=state.editingId; opSet(d); cancelEdit(); toast("Изменения сохранены"); };
+
+function readCash(){ const amount=round2($("csAmount").value); if(!(amount>0)){flash($("csAmount"));return null;}
+  const from=state.cs.dir==="me2partner"?"me":"partner", to=from==="me"?"partner":"me";
+  return {type:"cash_repayment",amount,from,to,status:state.cs.status,comment:$("csComment").value.trim(),date:$("csDate").value||todayISO()}; }
+function clearCashForm(){ $("csAmount").value="";$("csComment").value="";$("csDate").value=todayISO();
+  state.cs={dir:"me2partner",status:"confirmed"};
+  [...$("csDir").children].forEach((x,i)=>x.classList.toggle("on",i===0));
+  [...$("csStatus").children].forEach((x,i)=>x.classList.toggle("on",i===0)); }
+$("csSubmit").onclick=()=>{ const d=readCash(); if(!d)return; d.id=newId(); opSet(d); clearCashForm(); toast("Возврат добавлен"); };
+$("csSave").onclick=()=>{ const d=readCash(); if(!d)return; d.id=state.editingId; opSet(d); cancelEdit(); toast("Изменения сохранены"); };
+
+/* ---------- edit / delete ---------- */
+$("list").addEventListener("click",e=>{ const btn=e.target.closest("[data-act]"); if(!btn)return;
+  const id=btn.closest(".op").dataset.id, op=state.operations.find(o=>o.id===id); if(!op)return;
+  if(btn.dataset.act==="del"){
+    askConfirm(op.type==="cash_repayment"?"Удалить возврат наличными? Это изменит итоговый баланс.":"Удалить этот расход?",()=>{ opRemove(id); if(state.editingId===id)cancelEdit(); });
+  } else startEdit(op);
+});
+function startEdit(op){
+  state.editingId=op.id;
+  if(op.type==="expense"){
+    setTab("expense"); state.ex={payer:op.payer,category:op.category,mode:op.expenseMode};
+    $("exAmount").value=op.amount; $("exDesc").value=op.description||""; $("exDate").value=op.date||todayISO();
+    [...$("exPayer").children].forEach(x=>x.classList.toggle("on",x.dataset.v===op.payer));
+    renderCatChips(); setExMode(op.expenseMode); updateExWarn();
+    $("exSubmit").style.display="none"; $("exEditBar").classList.add("show");
+  }else{
+    setTab("cash"); state.cs={dir:op.from==="me"?"me2partner":"partner2me",status:op.status};
+    $("csAmount").value=op.amount; $("csComment").value=op.comment||""; $("csDate").value=op.date||todayISO();
+    [...$("csDir").children].forEach(x=>x.classList.toggle("on",x.dataset.v===state.cs.dir));
+    [...$("csStatus").children].forEach(x=>x.classList.toggle("on",x.dataset.v===op.status));
+    $("csSubmit").style.display="none"; $("csEditBar").classList.add("show");
+  }
+  document.querySelector(".panel").scrollIntoView({behavior:"smooth",block:"start"});
+}
+function cancelEdit(){
+  state.editingId=null;
+  $("exSubmit").style.display=""; $("exEditBar").classList.remove("show"); clearExpenseForm();
+  $("csSubmit").style.display=""; $("csEditBar").classList.remove("show"); clearCashForm();
+}
+$("exCancel").onclick=cancelEdit; $("csCancel").onclick=cancelEdit;
+
+/* ---------- confirm modal ---------- */
+let confirmCb=null;
+function askConfirm(text,cb){ $("cfText").textContent=text; confirmCb=cb; $("confirmOverlay").classList.add("show"); }
+$("cfCancel").onclick=()=>{ $("confirmOverlay").classList.remove("show"); confirmCb=null; };
+$("cfOk").onclick=()=>{ $("confirmOverlay").classList.remove("show"); if(confirmCb)confirmCb(); confirmCb=null; };
+$("confirmOverlay").addEventListener("click",e=>{ if(e.target===$("confirmOverlay"))$("cfCancel").click(); });
+
+/* ---------- filters ---------- */
+function buildFilterSelects(){
+  const p=$("fPayer"); p.innerHTML=`<option value="all">Все плательщики</option><option value="me">${esc(me())}</option><option value="partner">${esc(partner())}</option>`; p.value=state.filters.payer;
+  const c=$("fCat"); c.innerHTML=`<option value="all">Все категории</option>`+Object.entries(CATS).map(([k,v])=>`<option value="${k}">${v.emoji} ${v.label}</option>`).join(""); c.value=state.filters.category;
+}
+$("fSearch").addEventListener("input",e=>{ state.filters.search=e.target.value; renderList(); });
+$("fPayer").addEventListener("change",e=>{ state.filters.payer=e.target.value; renderList(); });
+$("fCat").addEventListener("change",e=>{ state.filters.category=e.target.value; renderList(); });
+$("fMode").addEventListener("change",e=>{ state.filters.mode=e.target.value; renderList(); });
+
+/* ---------- settings / sync ui ---------- */
+$("syncPill").onclick=()=>openSettings();
+$("openSettings").onclick=()=>openSettings();
+function openSettings(){
+  $("setMe").value=me(); $("setPartner").value=partner(); $("setCur").value=state.settings.currency;
+  $("setRoom").value=state.room;
+  setStatus(statusKind);
+  $("settingsOverlay").classList.add("show");
+}
+$("settingsOverlay").addEventListener("click",e=>{ if(e.target===$("settingsOverlay"))$("settingsOverlay").classList.remove("show"); });
+$("saveSettings").onclick=()=>{
+  state.settings.meName=$("setMe").value.trim()||"Я";
+  state.settings.partnerName=$("setPartner").value.trim()||"Бойфренд";
+  state.settings.currency=$("setCur").value;
+  settingsSave(); syncLabelsAndRefresh();
+  $("settingsOverlay").classList.remove("show");
+};
+$("joinRoom").onclick=()=>{
+  const code=$("setRoom").value.trim().replace(/\s+/g,"-");
+  if(!code){ toast("Введи код комнаты"); return; }
+  if(code===state.room){ toast("Уже в этой комнате"); return; }
+  state.room=code; localSave();
+  if(CONFIGURED && db){ attachRoom(code); toast("Подключаюсь к комнате…"); }
+  else { setStatus(CONFIGURED?"connecting":"local"); toast("Код сохранён"); }
+};
+$("copyRoom").onclick=async()=>{
+  try{ await navigator.clipboard.writeText(state.room); toast("Код скопирован"); }
+  catch(e){ $("setRoom").select(); document.execCommand&&document.execCommand("copy"); toast("Код выделен — скопируй вручную"); }
+};
+
+/* ---------- export / import / clear ---------- */
+function download(name,text,mime){ const b=new Blob([text],{type:mime}); const u=URL.createObjectURL(b); const a=document.createElement("a"); a.href=u; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(u),500); }
+$("expJson").onclick=()=>download("trip-split-"+todayISO()+".json",JSON.stringify({operations:state.operations,settings:state.settings},null,2),"application/json");
+$("expCsv").onclick=()=>{
+  const cols=["id","type","date","category","expenseMode","payer","from","to","status","amount","description","comment"];
+  const q=v=>{ v=v==null?"":String(v); return /[",\n;]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const rows=[cols.join(",")].concat(state.operations.map(o=>cols.map(c=>q(o[c])).join(",")));
+  download("trip-split-"+todayISO()+".csv","\uFEFF"+rows.join("\n"),"text/csv;charset=utf-8");
+};
+$("impJson").onclick=()=>$("jsonFile").click();
+$("jsonFile").addEventListener("change",e=>{ const file=e.target.files[0]; if(!file)return; const r=new FileReader();
+  r.onload=()=>{ try{ const d=JSON.parse(r.result); const ops=Array.isArray(d)?d:d.ops?Object.values(d.ops):d.operations; if(!Array.isArray(ops))throw 0;
+    askConfirm("Импорт заменит все текущие данные в этой комнате. Продолжить?",()=>{ replaceAll(ops, !Array.isArray(d)?d.settings:null); $("settingsOverlay").classList.remove("show"); toast("Импортировано"); });
+  }catch(err){ alert("Не удалось прочитать файл: нужен JSON, сохранённый из этого приложения."); } e.target.value=""; };
+  r.readAsText(file);
+});
+$("clearAll").onclick=()=>askConfirm("Удалить ВСЕ расходы и возвраты в этой комнате безвозвратно?",()=>{ replaceAll([],null); $("settingsOverlay").classList.remove("show"); toast("Очищено"); });
+
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ $("settingsOverlay").classList.remove("show"); if($("confirmOverlay").classList.contains("show"))$("cfCancel").click(); } });
+
+/* ---------- init ---------- */
+function init(){
+  localLoad();
+  if(!state.room) state.room="trip-"+Math.random().toString(36).slice(2,7);
+  localSave();
+  $("exDate").value=todayISO(); $("csDate").value=todayISO();
+  renderCatChips(); setExMode("shared");
+  syncExLabels(); syncCsLabels(); buildFilterSelects(); setTab("expense"); refresh();
+  setStatus(CONFIGURED?"connecting":"local");
+  initCloud();
+}
+init();
+</script>
+</body>
+</html>
